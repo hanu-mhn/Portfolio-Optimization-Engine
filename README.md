@@ -53,6 +53,10 @@ Open http://localhost:8501 in your browser after Streamlit reports it is
 running. If the app doesn't respond, re-run Streamlit in the foreground so you
 can inspect logs printed to the terminal.
 
+If you prefer to use the hosted demo, it's available here:
+
+https://portfolio-optimization-engine-hanu.streamlit.app/
+
 ## Running tests
 
 Run the unit tests with the project's Python in `.venv`:
