@@ -94,12 +94,49 @@ with st.sidebar.form('inputs'):
     mar = st.number_input('MAR (for Sortino/Omega)', value=0.0)
     alpha = st.number_input('CVaR confidence', value=0.95)
     long_only = st.checkbox('Long only', value=True)
+    min_weight_input = st.text_input('Min weight (scalar or comma-separated per ticker)', '')
+    max_weight_input = st.text_input('Max weight (scalar or comma-separated per ticker)', '')
     l1_reg = st.number_input('L1 regularization (sparsity)', value=0.0, step=0.0001, format="%f")
     transaction_cost = st.number_input('Transaction cost (per unit turnover)', value=0.0, step=0.0001, format="%f")
     use_nse = st.checkbox('Indian NSE tickers (.NS suffix)', value=True, help='If checked, tickers without .NS will get the .NS suffix appended')
     n_frontier = st.number_input('Frontier points', value=50, min_value=10)
     benchmark = st.text_input('Benchmark (ticker from list)', '')
     submit = st.form_submit_button('Run')
+
+
+def _parse_bounds_input(inp: str, n: int):
+    """Parse a user-provided bounds input string.
+
+    Accepts:
+    - empty string -> None
+    - scalar float -> returns scalar float
+    - comma-separated floats -> returns list of length n
+    Raises ValueError on malformed input or length mismatch.
+    """
+    if inp is None:
+        return None
+    s = str(inp).strip()
+    if s == '':
+        return None
+    # try scalar
+    try:
+        val = float(s)
+        return val
+    except Exception:
+        pass
+    # try comma-separated list
+    parts = [p.strip() for p in s.split(',') if p.strip() != '']
+    if not parts:
+        return None
+    if len(parts) not in (1, n):
+        raise ValueError(f"Expected {n} values or a single scalar, got {len(parts)} entries")
+    try:
+        vals = [float(p) for p in parts]
+    except Exception:
+        raise ValueError('Could not parse numeric values from bounds input')
+    if len(vals) == 1:
+        return vals[0]
+    return vals
 
 if submit:
     # prepare tickers list and optionally append NSE suffix
@@ -126,6 +163,69 @@ if submit:
         for tk, msg in dl_errors.items():
             st.write(f"{tk}: {msg}")
 
+    # parse min/max weight inputs now that we know how many tickers we have
+    min_weight = None
+    max_weight = None
+    try:
+        n_t = len(tlist)
+        min_weight = _parse_bounds_input(min_weight_input, n_t)
+        max_weight = _parse_bounds_input(max_weight_input, n_t)
+    except Exception as e:
+        st.error(f"Invalid min/max weight input: {e}")
+        prices = pd.DataFrame()
+
+    # Provide a per-ticker editor for bounds so users can set Min/Max for each asset
+    per_ticker_min = None
+    per_ticker_max = None
+    if prices is not None and not prices.empty:
+        try:
+            # normalize any scalar/list min/max into lists of length n_t for defaults
+            def _to_list(val, n, default):
+                if val is None:
+                    return [default] * n
+                if isinstance(val, (list, tuple)):
+                    if len(val) == n:
+                        return [float(v) for v in val]
+                    if len(val) == 1:
+                        return [float(val[0])] * n
+                return [float(val)] * n
+
+            # sensible defaults: long-only -> min 0.0, max 1.0; otherwise -1.0 to 1.0
+            default_min = 0.0 if long_only else -1.0
+            default_max = 1.0
+            default_min_list = _to_list(min_weight, n_t, default_min)
+            default_max_list = _to_list(max_weight, n_t, default_max)
+
+            per_ticker_min = []
+            per_ticker_max = []
+            with st.expander('Per-asset weight constraints (min / max)', expanded=True):
+                st.write('Set per-ticker minimum and maximum weight bounds. These override the global Min/Max inputs if provided.')
+                # layout three columns: ticker, min, max
+                cols = st.columns([3, 2, 2])
+                cols[0].markdown('**Ticker**')
+                cols[1].markdown('**Min weight**')
+                cols[2].markdown('**Max weight**')
+                for i, tk in enumerate(tlist):
+                    c0, c1, c2 = st.columns([3, 2, 2])
+                    c0.write(tk)
+                    # use ticker-safe keys so Streamlit preserves values across interactions
+                    key_min = f"per_min_{i}_{tk}"
+                    key_max = f"per_max_{i}_{tk}"
+                    mv = c1.number_input('', value=float(default_min_list[i]), format='%f', key=key_min)
+                    Mv = c2.number_input('', value=float(default_max_list[i]), format='%f', key=key_max)
+                    per_ticker_min.append(float(mv))
+                    per_ticker_max.append(float(Mv))
+
+            # validate per-ticker bounds
+            for i in range(n_t):
+                if per_ticker_min[i] > per_ticker_max[i]:
+                    st.error(f"For ticker {tlist[i]}: min ({per_ticker_min[i]}) > max ({per_ticker_max[i]})")
+                    prices = pd.DataFrame()
+                    break
+        except Exception as e:
+            st.error(f"Error preparing per-ticker bounds editor: {e}")
+            prices = pd.DataFrame()
+
     if prices is None or prices.empty:
         st.error('No price data could be fetched for the requested tickers/date range. Please check tickers, your network, or provide a prices DataFrame.')
         # ensure `res` exists so downstream UI code does not raise NameError
@@ -142,9 +242,14 @@ if submit:
                         st.error('Benchmark must be one of the requested tickers')
                         res = {}
                     else:
-                        res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, benchmark=benchmark, long_only=long_only, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
+            # prefer per-ticker bounds if user supplied them via the editor
+            mw = per_ticker_min if per_ticker_min is not None else min_weight
+            Mw = per_ticker_max if per_ticker_max is not None else max_weight
+            res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, benchmark=benchmark, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
             else:
-                res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
+    mw = per_ticker_min if per_ticker_min is not None else min_weight
+    Mw = per_ticker_max if per_ticker_max is not None else max_weight
+    res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
             # persist latest results and prices so other UI actions (backtest, exposures)
             # can access them across Streamlit reruns triggered by button clicks.
             try:
@@ -264,7 +369,7 @@ if submit:
                             est_prices = price_series.loc[train.index]
                             # call run_optimization using historical window; pass prev_w for turnover-aware penalties
                             try:
-                                out = run_optimization(method=method, prices=est_prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, n_frontier=n_frontier, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=prev_w)
+                                out = run_optimization(method=method, prices=est_prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, min_weight=min_weight, max_weight=max_weight, n_frontier=n_frontier, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=prev_w)
                             except Exception as e:
                                 st.error(f"Optimization failed during backtest at index {i}: {e}")
                                 break
