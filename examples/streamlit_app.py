@@ -237,19 +237,18 @@ if submit:
                 if not benchmark:
                     st.error('Benchmark ticker is required for tracking-error / information-ratio methods. Please enter a benchmark in the sidebar.')
                     res = {}
+                elif benchmark not in tlist:
+                    st.error('Benchmark must be one of the requested tickers')
+                    res = {}
                 else:
-                    if benchmark not in tlist:
-                        st.error('Benchmark must be one of the requested tickers')
-                        res = {}
-                    else:
-            # prefer per-ticker bounds if user supplied them via the editor
-            mw = per_ticker_min if per_ticker_min is not None else min_weight
-            Mw = per_ticker_max if per_ticker_max is not None else max_weight
-            res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, benchmark=benchmark, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
+                    # prefer per-ticker bounds if user supplied them via the editor
+                    mw = per_ticker_min if per_ticker_min is not None else min_weight
+                    Mw = per_ticker_max if per_ticker_max is not None else max_weight
+                    res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, benchmark=benchmark, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
             else:
-    mw = per_ticker_min if per_ticker_min is not None else min_weight
-    Mw = per_ticker_max if per_ticker_max is not None else max_weight
-    res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
+                mw = per_ticker_min if per_ticker_min is not None else min_weight
+                Mw = per_ticker_max if per_ticker_max is not None else max_weight
+                res = run_optimization(method=method, prices=prices, risk_free=risk_free, mar=mar, alpha=alpha, long_only=long_only, min_weight=mw, max_weight=Mw, n_frontier=n_frontier, return_figures=True, l1_reg=float(l1_reg), transaction_cost=float(transaction_cost), prev_weights=None)
             # persist latest results and prices so other UI actions (backtest, exposures)
             # can access them across Streamlit reruns triggered by button clicks.
             try:
